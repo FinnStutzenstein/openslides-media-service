@@ -1,6 +1,7 @@
 import atexit
 import base64
 import json
+from functools import wraps
 
 from flask import Flask, Response, jsonify, request
 
@@ -24,13 +25,26 @@ def handle_view_error(error):
         f"Request to {request.path} resulted in {error.status_code}: "
         f"{error.message}"
     )
-    res_content = {"message": f"Media-Server: {error.message}"}
+    res_content = {"success": False, "message": error.message}
     response = jsonify(res_content)
     response.status_code = error.status_code
     return response
 
 
-@app.route("/system/media/get/<int:mediafile_id>")
+def handle_general_errors(fn):
+    @wraps(fn)
+    def view(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            app.logger.exception(e)
+            raise e
+
+    return view
+
+
+@app.route("/system/media/get/<int:mediafile_id>", strict_slashes=False)
+@handle_general_errors
 def serve(mediafile_id):
     # get mediafile id
     presenter_headers = dict(request.headers)
@@ -60,8 +74,9 @@ def serve(mediafile_id):
     return response
 
 
-@app.route("/internal/media/upload/", methods=["POST"])
-def media_post():
+@app.route("/internal/media/upload", methods=["POST"], strict_slashes=False)
+@handle_general_errors
+def upload():
     try:
         decoded = request.data.decode()
         dejson = json.loads(decoded)
@@ -79,9 +94,10 @@ def media_post():
             f"The post request.data is not in right format: {request.data}"
         )
     app.logger.debug(f"to database media {media_id} {mimetype}")
+
     global database
     database.set_mediafile(media_id, media, mimetype)
-    return f"Mediaserver: add {media_id} to db", 200
+    return {"success": True}, 200
 
 
 def shutdown(database):
